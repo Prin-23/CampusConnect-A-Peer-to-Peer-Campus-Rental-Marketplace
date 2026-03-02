@@ -1,0 +1,2 @@
+# CampusConnect-A-Peer-to-Peer-Campus-Rental-Marketplace
+CampusConnect is a peer-to-peer rental platform for college students to rent and lend items within their campus. It allows sharing of books, electronics, lab tools, bikes, and essentials in a secure and affordable way. Students can access items for short-term , reducing costs while promoting sustainability and stronger campus community connections.
