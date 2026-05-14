@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Navbar from "./Navbar";
 import { apiFetch } from "../utils/api";
@@ -45,6 +45,14 @@ export default function PaymentPage() {
   const navigate  = useNavigate();
   const location  = useLocation();
 
+  // Load Razorpay Script
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    document.body.appendChild(script);
+  }, []);
+
   // Order summary passed from OrderPage via navigation state
   const order = location.state || {};
   const {
@@ -66,20 +74,76 @@ export default function PaymentPage() {
       const order_id = localStorage.getItem("order_id");
       if (!order_id) throw new Error("No active order found. Please go back and try again.");
 
-      await apiFetch("/payments/", {
-        method: "POST",
-        body: { order_id, amount: total || 0, payment_method: method }
-      });
+      if (method === "upi") {
+        // 1. Create Razorpay Order
+        const orderData = await apiFetch("/payments/create-razorpay-order", {
+          method: "POST",
+          body: { order_id, amount: total || 0, payment_method: method }
+        });
 
-      setSuccess(true);
-      setTimeout(() => {
-        localStorage.removeItem("order_id");
-        navigate("/dashboard");
-      }, 2500);
+        // 2. Open Razorpay Checkout Modal
+        const options = {
+          key: "rzp_test_Sp6zDdfpNZ5adv", // Safe Test Key
+          amount: orderData.amount,
+          currency: "INR",
+          name: "CampusConnect",
+          description: "Simulated Escrow Hold for " + productName,
+          order_id: orderData.id,
+          handler: async function (response) {
+            try {
+              // 3. Verify Payment Signature
+              await apiFetch("/payments/verify-razorpay", {
+                method: "POST",
+                body: {
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_signature: response.razorpay_signature,
+                  order_id: order_id,
+                  amount: total || 0
+                }
+              });
+              
+              setSuccess(true);
+              setTimeout(() => {
+                localStorage.removeItem("order_id");
+                navigate("/dashboard");
+              }, 2500);
+            } catch (verifyErr) {
+              alert("Payment Verification Failed: " + verifyErr.message);
+              setLoading(false);
+            }
+          },
+          prefill: {
+            name: "College Student",
+            email: "student@campusconnect.edu",
+            contact: "9999999999"
+          },
+          theme: {
+            color: "#10b981"
+          }
+        };
 
+        const rzp = new window.Razorpay(options);
+        rzp.on('payment.failed', function (response){
+          alert("Payment Failed. Please try again.");
+          setLoading(false);
+        });
+        rzp.open();
+      } else {
+        // Cash on delivery / traditional logic
+        await apiFetch("/payments/", {
+          method: "POST",
+          body: { order_id, amount: total || 0, payment_method: method }
+        });
+
+        setSuccess(true);
+        setTimeout(() => {
+          localStorage.removeItem("order_id");
+          navigate("/dashboard");
+        }, 2500);
+      }
     } catch (err) {
       alert(err.message);
-    } finally {
       setLoading(false);
     }
   };
@@ -201,7 +265,14 @@ export default function PaymentPage() {
                   {method === "upi" && (
                     <div className="mt-4 flex gap-2">
                       {["PhonePe", "GPay", "Paytm"].map((app) => (
-                        <button key={app} className="flex-1 py-2 rounded-xl bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 shadow-sm font-bold text-sm text-slate-700 transition-all">
+                        <button 
+                          key={app} 
+                          onClick={(e) => {
+                            e.stopPropagation(); // prevent triggering the parent div's onClick
+                            handlePayment();
+                          }}
+                          className="flex-1 py-2 rounded-xl bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 shadow-sm font-bold text-sm text-slate-700 transition-all active:scale-95"
+                        >
                           {app}
                         </button>
                       ))}

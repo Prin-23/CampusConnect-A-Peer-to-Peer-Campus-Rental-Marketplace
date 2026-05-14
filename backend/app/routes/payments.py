@@ -7,8 +7,88 @@ from app.db.mongodb import db
 from bson import ObjectId
 from datetime import datetime
 
+import razorpay
+import os
+import hmac
+import hashlib
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from app.core.config import settings
+
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
+try:
+    razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+except Exception as e:
+    print(f"Failed to initialize Razorpay Client: {e}")
+
+# CREATE RAZORPAY ORDER (Simulated Escrow Hold)
+@router.post("/create-razorpay-order")
+async def create_razorpay_order(
+    data: PaymentCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        # 🔍 Find order to get total price
+        order = await db.orders.find_one({"_id": ObjectId(data.order_id)})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+            
+        amount = int(order["total_price"] * 100) # Razorpay accepts amount in paise
+        
+        # Razorpay requires minimum 1 INR (100 paise)
+        if amount < 100:
+            amount = 100
+        
+        razorpay_order = razorpay_client.order.create({
+            "amount": amount,
+            "currency": "INR",
+            "receipt": f"receipt_{data.order_id}"
+        })
+        
+        return {"id": razorpay_order["id"], "amount": amount, "currency": "INR"}
+    except Exception as e:
+        print(f"Razorpay Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Razorpay Error: {str(e)}")
+
+
+# VERIFY RAZORPAY PAYMENT
+@router.post("/verify-razorpay")
+async def verify_razorpay_payment(
+    data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        # Verify the signature
+        razorpay_client.utility.verify_payment_signature({
+            'razorpay_order_id': data.get('razorpay_order_id'),
+            'razorpay_payment_id': data.get('razorpay_payment_id'),
+            'razorpay_signature': data.get('razorpay_signature')
+        })
+        
+        # Payment is verified. Now create our internal payment record and update order.
+        payment_data = PaymentCreate(
+            order_id=data.get("order_id"),
+            amount=data.get("amount"),
+            payment_method="UPI" # Assuming UPI for simplicity in this project
+        )
+        
+        payment = await PaymentService.create_payment(payment_data)
+        
+        # Update Order Status
+        await db.orders.update_one(
+            {"_id": ObjectId(data.get("order_id"))},
+            {"$set": {"status": "paid"}}
+        )
+        
+        return {"status": "success", "message": "Payment verified securely"}
+        
+    except razorpay.errors.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # CREATE PAYMENT
 @router.post("/")

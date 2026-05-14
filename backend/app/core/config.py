@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # ==============================
     # 🔹 Optional (Future Use)
     # ==============================
+    RAZORPAY_KEY_ID: str | None = None
+    RAZORPAY_KEY_SECRET: str | None = None
     # REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     class Config:
